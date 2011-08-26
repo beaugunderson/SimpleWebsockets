@@ -1,16 +1,15 @@
 ﻿using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("Alchemy WebSocket Server")]
+[assembly: AssemblyTitle("SimpleWebsockets")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
-[assembly: AssemblyCompany("Olivine Labs, LLC")]
-[assembly: AssemblyProduct("Alchemy WebSocket Server")]
-[assembly: AssemblyCopyright("Copyright © Olivine Labs, LLC 2011")]
+[assembly: AssemblyCompany("Beau Gunderson")]
+[assembly: AssemblyProduct("SimpleWebsockets")]
+[assembly: AssemblyCopyright("Copyright © Beau Gunderson 2011")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
 

@@ -1,34 +1,31 @@
 ﻿/*
-Copyright 2011 Olivine Labs, LLC.
-http://www.olivinelabs.com
+Portions copyright 2011 Beau Gunderson - http://www.beaugunderson.com/
+Portions copyright 2011 Olivine Labs, LLC. - http://www.olivinelabs.com/
 */
 
 /*
-This file is part of Alchemy Websockets.
+This file is part of SimpleWebsockets.
 
-Alchemy Websockets is free software: you can redistribute it and/or modify
+SimpleWebsockets is free software: you can redistribute it and/or modify
 it under the terms of the GNU Lesser General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-Alchemy Websockets is distributed in the hope that it will be useful,
+SimpleWebsockets is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU Lesser General Public License for more details.
 
 You should have received a copy of the GNU Lesser General Public License
-along with Alchemy Websockets.  If not, see <http://www.gnu.org/licenses/>.
+along with SimpleWebsockets.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
 using System.Collections.Specialized;
 using System.Text.RegularExpressions;
 using System.Web;
 
-namespace Alchemy.Server.Classes
+namespace SimpleWebsockets.Server.Classes
 {
     /// <summary>
     /// What protocols we support
@@ -48,9 +45,8 @@ namespace Alchemy.Server.Classes
         /// <summary>
         /// Regular expression to parse http header
         /// </summary>
-        public static string Pattern = 
-            @"^(?<connect>[^\s]+)\s(?<path>[^\s]+)\sHTTP\/1\.1\r\n" +       // HTTP Request
-            @"((?<field_name>[^:\r\n]+):(?<field_value>[^\r\n]+)\r\n)+";    // HTTP Header Fields (<Field_Name>: <Field_Value> CR LF)
+        public const string Pattern = @"^(?<connect>[^\s]+)\s(?<path>[^\s]+)\sHTTP\/1\.1\r\n" + // HTTP Request
+                                      @"((?<field_name>[^:\r\n]+):(?<field_value>[^\r\n]+)\r\n)+"; // HTTP Header Fields (<Field_Name>: <Field_Value> CR LF)
 
         /// <summary>
         /// The HTTP Method (GET/POST/PUT, etc.)
@@ -62,7 +58,6 @@ namespace Alchemy.Server.Classes
         /// </summary>
         public Protocol Protocol = Protocol.None;
 
-
         /// <summary>
         /// The path requested by the header.
         /// </summary>
@@ -71,12 +66,12 @@ namespace Alchemy.Server.Classes
         /// <summary>
         /// Any cookies sent with the header.
         /// </summary>
-        public HttpCookieCollection Cookies = new HttpCookieCollection();
+        public readonly HttpCookieCollection Cookies = new HttpCookieCollection();
 
         /// <summary>
         /// A collection of fields attached to the header.
         /// </summary>
-        private NameValueCollection Fields = new NameValueCollection();
+        private readonly NameValueCollection _fields = new NameValueCollection();
 
         /// <summary>
         /// Gets or sets the Fields object with the specified key.
@@ -85,11 +80,12 @@ namespace Alchemy.Server.Classes
         {
             get
             {
-                return Fields[Key];
+                return _fields[Key];
             }
+
             set
             {
-                Fields[Key] = value;
+                _fields[Key] = value;
             }
         }
 
@@ -97,58 +93,71 @@ namespace Alchemy.Server.Classes
         /// Initializes a new instance of the <see cref="Header"/> class.
         /// Accepts a string that represents an HTTP header.
         /// </summary>
-        /// <param name="Data">The data.</param>
-        public Header(string Data)
+        /// <param name="data">The data.</param>
+        public Header(string data)
         {
             try
             {
                 // Parse HTTP Header
-                Regex regex = new Regex(Pattern, RegexOptions.IgnoreCase);
-                Match match = regex.Match(Data);
-                GroupCollection SomeFields = match.Groups;
+                var regex = new Regex(Pattern, RegexOptions.IgnoreCase);
+                var match = regex.Match(data);
+                var someFields = match.Groups;
+
                 // run through every match and save them in the handshake object
-                for (int i = 0; i < SomeFields["field_name"].Captures.Count; i++)
+                for (int i = 0; i < someFields["field_name"].Captures.Count; i++)
                 {
-                    string Name = SomeFields["field_name"].Captures[i].ToString().ToLower();
-                    string Value = SomeFields["field_value"].Captures[i].ToString().Trim();
-                    switch (Name)
+                    string name = someFields["field_name"].Captures[i].ToString().ToLower();
+                    string value = someFields["field_value"].Captures[i].ToString().Trim();
+
+                    switch (name)
                     {
                         case "cookie":
-                            string[] CookieArray = Value.Split(';');
-                            foreach (string ACookie in CookieArray)
+                            string[] CookieArray = value.Split(';');
+
+                            foreach (var aCookie in CookieArray)
                             {
                                 try
                                 {
-                                    string CookieName = ACookie.Remove(ACookie.IndexOf('='));
-                                    string CookieValue = ACookie.Substring(ACookie.IndexOf('=') + 1);
-                                    Cookies.Add(new HttpCookie(CookieName.TrimStart(), CookieValue));
+                                    string cookieName = aCookie.Remove(aCookie.IndexOf('='));
+                                    string cookieValue = aCookie.Substring(aCookie.IndexOf('=') + 1);
+
+                                    Cookies.Add(new HttpCookie(cookieName.TrimStart(), cookieValue));
                                 }
                                 catch { /* Ignore bad cookie */ }
                             }
+                            
                             break;
                         default:
-                            Fields.Add(Name, Value);
+                            _fields.Add(name, value);
+                            
                             break;
                     }
                 }
 
-                RequestPath = SomeFields["path"].Captures[0].Value.Trim();
-                Method = SomeFields["connect"].Captures[0].Value.Trim();
+                RequestPath = someFields["path"].Captures[0].Value.Trim();
+                Method = someFields["connect"].Captures[0].Value.Trim();
 
-                string[] PathExplode = RequestPath.Split('/');
-                string ProtocolString = string.Empty;
-                if (PathExplode.Length > 0)
-                    ProtocolString = PathExplode[PathExplode.Length - 1].ToLower().Trim();
-                switch (ProtocolString)
+                string[] pathExplode = RequestPath.Split('/');
+                string protocolString = string.Empty;
+                
+                if (pathExplode.Length > 0)
+                {
+                    protocolString = pathExplode[pathExplode.Length - 1].ToLower().Trim();
+                }
+
+                switch (protocolString)
                 {
                     case "websocket":
-                        this.Protocol = Protocol.WebSocket;
+                        Protocol = Protocol.WebSocket;
+                        
                         break;
                     case "flashsocket":
-                        this.Protocol = Protocol.FlashSocket;
+                        Protocol = Protocol.FlashSocket;
+                        
                         break;
                     default:
-                        this.Protocol = Protocol.None;
+                        Protocol = Protocol.None;
+                        
                         break;
                 }
             }

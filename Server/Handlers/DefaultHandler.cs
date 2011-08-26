@@ -1,33 +1,31 @@
 ﻿/*
-Copyright 2011 Olivine Labs, LLC.
-http://www.olivinelabs.com
+Portions copyright 2011 Beau Gunderson - http://www.beaugunderson.com/
+Portions copyright 2011 Olivine Labs, LLC. - http://www.olivinelabs.com/
 */
 
 /*
-This file is part of Alchemy Websockets.
+This file is part of SimpleWebsockets.
 
-Alchemy Websockets is free software: you can redistribute it and/or modify
+SimpleWebsockets is free software: you can redistribute it and/or modify
 it under the terms of the GNU Lesser General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-Alchemy Websockets is distributed in the hope that it will be useful,
+SimpleWebsockets is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU Lesser General Public License for more details.
 
 You should have received a copy of the GNU Lesser General Public License
-along with Alchemy Websockets.  If not, see <http://www.gnu.org/licenses/>.
+along with SimpleWebsockets.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using Alchemy.Server.Classes;
 using System.Net.Sockets;
 
-namespace Alchemy.Server.Handlers
+using SimpleWebsockets.Server.Classes;
+
+namespace SimpleWebsockets.Server.Handlers
 {
     /// <summary>
     /// When the protocol has not yet been determined the system defaults to this request handler.
@@ -35,21 +33,24 @@ namespace Alchemy.Server.Handlers
     /// </summary>
     class DefaultHandler : Handler
     {
-        private static DefaultHandler _Instance;
+        private static DefaultHandler _instance;
 
-        private DefaultHandler() { }
+        private DefaultHandler() {}
 
         public static DefaultHandler Instance
         {
             get 
             {
                 CreateLock.Wait();
-                if (_Instance == null)
+
+                if (_instance == null)
                 {
-                    _Instance = new DefaultHandler();
+                    _instance = new DefaultHandler();
                 }
+                
                 CreateLock.Release();
-                return _Instance;
+                
+                return _instance;
             }
         }
 
@@ -58,59 +59,66 @@ namespace Alchemy.Server.Handlers
         /// Attempts to process the header that should have been sent.
         /// Otherwise, through magic and wizardry, the client gets disconnected.
         /// </summary>
-        /// <param name="AContext">The user context.</param>
-        public override void HandleRequest(Context AContext)
+        /// <param name="context">The user context.</param>
+        public override void HandleRequest(Context context)
         {
-            if (AContext.IsSetup)
+            if (context.IsSetup)
             {
-                AContext.Dispose();
+                context.Dispose();
             }
             else
             {
-                ProcessHeader(AContext);
+                ProcessHeader(context);
             }
         }
 
         /// <summary>
         /// Processes the header.
         /// </summary>
-        /// <param name="AContext">The user context.</param>
-        public void ProcessHeader(Context AContext)
+        /// <param name="context">The user context.</param>
+        public void ProcessHeader(Context context)
         {
-            string Data = AContext.UserContext.Encoding.GetString(AContext.Buffer, 0, AContext.ReceivedByteCount);
+            string data = context.UserContext.Encoding.GetString(context.Buffer, 0, context.ReceivedByteCount);
+
             //Check first to see if this is a flash socket XML request.
-            if (Data == "<policy-file-request/>\0")
+            if (data == "<policy-file-request/>\0")
             {
                 try
                 {
                     //if it is, we access the Access Policy Server instance to send the appropriate response.
-                    AContext.Server.AccessPolicyServer.SendResponse(AContext.Connection);
+                    context.Server.AccessPolicyServer.SendResponse(context.Connection);
                 }
-                catch { }
-                AContext.Dispose();
+                catch {}
+
+                context.Dispose();
             }
             else//If it isn't, process http/websocket header as normal.
             {
-                AContext.Header = new Header(Data);
-                switch (AContext.Header.Protocol)
+                context.Header = new Header(data);
+
+                switch (context.Header.Protocol)
                 {
                     case Protocol.WebSocket:
-                        AContext.Handler = WebSocketHandler.Instance;
+                        context.Handler = WebSocketHandler.Instance;
+                        
                         break;
                     case Protocol.FlashSocket:
-                        AContext.Handler = WebSocketHandler.Instance;
+                        context.Handler = WebSocketHandler.Instance;
+
                         break;
                     default:
-                        AContext.Header.Protocol = Protocol.None;
+                        context.Header.Protocol = Protocol.None;
+                        
                         break;
                 }
-                if (AContext.Header.Protocol != Protocol.None)
+                
+                if (context.Header.Protocol != Protocol.None)
                 {
-                    AContext.Handler.HandleRequest(AContext);
+                    context.Handler.HandleRequest(context);
                 }
                 else
                 {
-                    AContext.UserContext.Send(Response.NotImplemented, true);
+                    context.UserContext.Send(Response.NotImplemented, true);
                 }
             }
         }
@@ -118,62 +126,72 @@ namespace Alchemy.Server.Handlers
         /// <summary>
         /// Sends the specified data.
         /// </summary>
-        /// <param name="Data">The data.</param>
-        /// <param name="AContext">The user context.</param>
-        /// <param name="Close">if set to <c>true</c> [close].</param>
-        public override void Send(byte[] Data, Context AContext, bool Close = false)
+        /// <param name="data">The data.</param>
+        /// <param name="context">The user context.</param>
+        /// <param name="close">if set to <c>true</c> [close].</param>
+        public override void Send(byte[] data, Context context, bool close = false)
         {
             AsyncCallback ACallback = EndSend;
-            if (Close)
+
+            if (close)
+            {
                 ACallback = EndSendAndClose;
-            AContext.SendReady.Wait();
+            }
+            
+            context.SendReady.Wait();
+            
             try
             {
-                AContext.Connection.Client.BeginSend(Data, 0, Data.Length, SocketFlags.None, ACallback, AContext);
+                context.Connection.Client.BeginSend(data, 0, data.Length, SocketFlags.None, ACallback, context);
             }
             catch
             {
-                AContext.SendReady.Release();
+                context.SendReady.Release();
             }
         }
 
         /// <summary>
         /// Ends the send.
         /// </summary>
-        /// <param name="AResult">The Async result.</param>
-        public override void EndSend(IAsyncResult AResult)
+        /// <param name="result">The Async result.</param>
+        public override void EndSend(IAsyncResult result)
         {
-            Context AContext = (Context)AResult.AsyncState;
+            var context = (Context)result.AsyncState;
+
             try
             {
-                AContext.Connection.Client.EndSend(AResult);
-                AContext.SendReady.Release();
+                context.Connection.Client.EndSend(result);
+                context.SendReady.Release();
             }
             catch
             {
-                AContext.SendReady.Release();
+                context.SendReady.Release();
             }
-            AContext.UserContext.OnSend();
+            
+            context.UserContext.OnSend();
         }
 
         /// <summary>
         /// Ends the send and closes the connection.
         /// </summary>
-        /// <param name="AResult">The Async result.</param>
-        public override void EndSendAndClose(IAsyncResult AResult)
+        /// <param name="result">The Async result.</param>
+        public override void EndSendAndClose(IAsyncResult result)
         {
-            Context AContext = (Context)AResult.AsyncState;
+            var context = (Context)result.AsyncState;
+            
             try
             {
-                AContext.Connection.Client.EndSend(AResult);
-                AContext.SendReady.Release();
+                context.Connection.Client.EndSend(result);
+                context.SendReady.Release();
             }
             catch
             {
-                AContext.SendReady.Release();
+                context.SendReady.Release();
             }
-            AContext.UserContext.OnSend();
-            AContext.Dispose();
+            
+            context.UserContext.OnSend();
+
+            context.Dispose();
         }
     }
 }

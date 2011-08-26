@@ -1,34 +1,32 @@
 ﻿/*
-Copyright 2011 Olivine Labs, LLC.
-http://www.olivinelabs.com
+Portions copyright 2011 Beau Gunderson - http://www.beaugunderson.com/
+Portions copyright 2011 Olivine Labs, LLC. - http://www.olivinelabs.com/
 */
 
 /*
-This file is part of Alchemy Websockets.
+This file is part of SimpleWebsockets.
 
-Alchemy Websockets is free software: you can redistribute it and/or modify
+SimpleWebsockets is free software: you can redistribute it and/or modify
 it under the terms of the GNU Lesser General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-Alchemy Websockets is distributed in the hope that it will be useful,
+SimpleWebsockets is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU Lesser General Public License for more details.
 
 You should have received a copy of the GNU Lesser General Public License
-along with Alchemy Websockets.  If not, see <http://www.gnu.org/licenses/>.
+along with SimpleWebsockets.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 using System;
 using System.Collections.Generic;
-using System.Linq;
-using System.Text;
-using System.Net;
 using System.Web;
-using Alchemy.Server.Classes;
 
-namespace Alchemy.Server.Handlers.WebSocket
+using SimpleWebsockets.Server.Classes;
+
+namespace SimpleWebsockets.Server.Handlers.WebSocket
 {
     /// <summary>
     /// An easy wrapper for the header to access client handshake data.
@@ -45,16 +43,14 @@ namespace Alchemy.Server.Handlers.WebSocket
             "Connection: Upgrade\r\n" +
             "Origin: {1}\r\n" +
             "Host: {2}\r\n" +
-            "Sec-Websocket-Key1: {3}\r\n" +
-            "Sec-Websocket-Key2: {4}\r\n" +
-            "{5}";
+            "Sec-Websocket-Key: {3}\r\n" +
+            "{4}";
 
-        public string Origin = String.Empty;
-        public string Host = String.Empty;
-        public string ResourcePath = String.Empty;
-        public string Key1 = String.Empty;
-        public string Key2 = String.Empty;
-        public ArraySegment<byte> ChallengeBytes { get; set; }
+        public readonly string Origin = String.Empty;
+        public readonly string Host = String.Empty;
+        public readonly string ResourcePath = String.Empty;
+        public readonly string Key = String.Empty;
+
         public HttpCookieCollection Cookies { get; set; }
         public string SubProtocol { get; set; }
         public Dictionary<string,string> AdditionalFields { get; set; }
@@ -62,18 +58,15 @@ namespace Alchemy.Server.Handlers.WebSocket
         /// <summary>
         /// Initializes a new instance of the <see cref="ClientHandshake"/> class.
         /// </summary>
-        /// <param name="ChallengeBytes">The challenge bytes.</param>
-        /// <param name="AHeader">The header.</param>
-        public ClientHandshake(ArraySegment<byte> ChallengeBytes, Header AHeader)
+        /// <param name="aHeader">The header.</param>
+        public ClientHandshake(Header aHeader)
         {
-            this.ChallengeBytes = ChallengeBytes;
-            ResourcePath = AHeader.RequestPath;
-            Key1 = AHeader["sec-websocket-key1"];
-            Key2 = AHeader["sec-websocket-key2"];
-            SubProtocol = AHeader["sec-websocket-protocol"];
-            Origin = AHeader["origin"];
-            Host = AHeader["host"];
-            Cookies = AHeader.Cookies;
+            ResourcePath = aHeader.RequestPath;
+            Key = aHeader["sec-websocket-key"];
+            SubProtocol = aHeader["sec-websocket-protocol"];
+            Origin = aHeader["sec-websocket-origin"];
+            Host = aHeader["host"];
+            Cookies = aHeader.Cookies;
         }
 
         /// <summary>
@@ -85,10 +78,8 @@ namespace Alchemy.Server.Handlers.WebSocket
         public bool IsValid()
         {
             return (
-                (ChallengeBytes != null) &&
                 (Host != null) &&
-                (Key1 != null) &&
-                (Key2 != null) &&
+                (Key != null) &&
                 (Origin != null) &&
                 (ResourcePath != null)
             );
@@ -102,25 +93,29 @@ namespace Alchemy.Server.Handlers.WebSocket
         /// </returns>
         public override string ToString()
         {
-            string AdditionalFields = String.Empty;
+            string additionalFields = String.Empty;
 
             if (Cookies != null)
             {
-                AdditionalFields += "Cookie: " + Cookies.ToString() + "\r\n";
+                additionalFields += string.Format("Cookie: {0}\r\n", Cookies);
             }
+
             if (SubProtocol != null)
-                AdditionalFields += "Sec-Websocket-Protocol: " + SubProtocol + "\r\n";
+            {
+                additionalFields += string.Format("Sec-Websocket-Protocol: {0}\r\n", SubProtocol);
+            }
 
             if (AdditionalFields != null)
             {
-                foreach (KeyValuePair<string, string> field in this.AdditionalFields)
+                foreach (var field in AdditionalFields)
                 {
-                    AdditionalFields += field.Key + ": " + field.Value + "\r\n";
+                    additionalFields += string.Format("{0}: {1}\r\n", field.Key, field.Value);
                 }
             }
-            AdditionalFields += "\r\n";
 
-            return String.Format(Handshake, ResourcePath, Origin, Host, Key1, Key2, AdditionalFields);
+            additionalFields += "\r\n";
+
+            return String.Format(Handshake, ResourcePath, Origin, Host, Key, additionalFields);
         }
     }
 
@@ -139,13 +134,14 @@ namespace Alchemy.Server.Handlers.WebSocket
                 "Connection: Upgrade\r\n" +
                 "Sec-WebSocket-Origin: {0}\r\n" +
                 "Sec-WebSocket-Location: {1}\r\n" +
-                "{2}" +
-                "                ";//Empty space for challenge answer
+                "Sec-WebSocket-Accept: {2}\r\n" +
+                "{3}";
 
         public string Origin = String.Empty;
         public string Location = String.Empty;
-        public byte[] AnswerBytes { get; set; }
+        public string AnswerKey { get; set; }
         public string SubProtocol { get; set; }
+
         public Dictionary<string, string> AdditionalFields { get; set; }
 
         /// <summary>
@@ -156,14 +152,16 @@ namespace Alchemy.Server.Handlers.WebSocket
         /// </returns>
         public override string ToString()
         {
-            string AdditionalFields = String.Empty;
+            string additionalFields = String.Empty;
+
             if (SubProtocol != null)
             {
-                AdditionalFields += "Sec-WebSocket-Protocol: " + SubProtocol + "\r\n";
+                additionalFields += string.Format("Sec-WebSocket-Protocol: {0}\r\n", SubProtocol);
             }
-            AdditionalFields += "\r\n";
+            
+            additionalFields += "\r\n";
 
-            return String.Format(Handshake, Origin, Location, AdditionalFields);
+            return String.Format(Handshake, Origin, Location, AnswerKey, additionalFields);
         }
     }
 }

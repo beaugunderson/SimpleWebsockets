@@ -1,112 +1,89 @@
 ﻿/*
-Copyright 2011 Olivine Labs, LLC.
-http://www.olivinelabs.com
+Portions copyright 2011 Beau Gunderson - http://www.beaugunderson.com/
+Portions copyright 2011 Olivine Labs, LLC. - http://www.olivinelabs.com/
 */
 
 /*
-This file is part of Alchemy Websockets.
+This file is part of SimpleWebsockets.
 
-Alchemy Websockets is free software: you can redistribute it and/or modify
+SimpleWebsockets is free software: you can redistribute it and/or modify
 it under the terms of the GNU Lesser General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-Alchemy Websockets is distributed in the hope that it will be useful,
+SimpleWebsockets is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU Lesser General Public License for more details.
 
 You should have received a copy of the GNU Lesser General Public License
-along with Alchemy Websockets.  If not, see <http://www.gnu.org/licenses/>.
+along with SimpleWebsockets.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
-using System.Text;
+using System.IO;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
-using Alchemy.Server.Classes;
-using log4net;
-using System.IO;
-using Alchemy.Server.Handlers.WebSocket;
 
-namespace Alchemy.Server
+using SimpleWebsockets.Server.Classes;
+using SimpleWebsockets.Server.Handlers.WebSocket;
+
+using log4net;
+
+namespace SimpleWebsockets.Server
 {
-    public delegate void OnEventDelegate(UserContext AContext);
+    public delegate void OnEventDelegate(UserContext context);
 
     /// <summary>
     /// The Main WebSocket Server
     /// </summary>
-    public class WSServer : IDisposable
+    public class WebsocketServer : IDisposable
     {
-
-        /// <summary>
-        /// Private, Internal variables.
-        /// </summary>
-        private int _Port = 81;
-        private IPAddress _ListenerAddress = IPAddress.Any;
-
-        /// <summary>
-        /// The number of connected clients.
-        /// </summary>
-        /// 
-        private int _Clients = 0;
-
         /// <summary>
         /// This Semaphore protects out clients variable on increment/decrement when a user connects/disconnects.
         /// </summary>
-        private SemaphoreSlim ClientLock = new SemaphoreSlim(1);
-        private int DefaultBufferSize = 512;
-        private TcpListener Listener = null;
+        private readonly SemaphoreSlim _clientLock = new SemaphoreSlim(1);
+
+        private const int DefaultBufferSize = 512;
+        private TcpListener _listener;
 
         /// <summary>
         /// This Semaphore limits how many connection events we have active at a time.
         /// </summary>
-        private SemaphoreSlim ConnectReady = new SemaphoreSlim(10);
+        private readonly SemaphoreSlim _connectReady = new SemaphoreSlim(10);
 
-        private string _OriginHost = String.Empty;
-        private string _DestinationHost = String.Empty;
+        private string _originHost = String.Empty;
+        private string _destinationHost = String.Empty;
 
         /// <summary>
         /// These are the default OnEvent delegates for the server. By default, all new UserContexts will use these events.
         /// It is up to you whether you want to replace them at runtime or even manually set the events differently per connection in OnReceive.
         /// </summary>
-        public OnEventDelegate DefaultOnConnect = (x) => { };
-        public OnEventDelegate DefaultOnDisconnect = (x) => { };
-        public OnEventDelegate DefaultOnReceive = (x) => { };
-        public OnEventDelegate DefaultOnSend = (x) => { };
+        public OnEventDelegate DefaultOnConnect = x => {};
+        public OnEventDelegate DefaultOnDisconnect = x => {};
+        public OnEventDelegate DefaultOnReceive = x => {};
+        public OnEventDelegate DefaultOnSend = x => {};
 
         /// <summary>
         /// This is the Flash Access Policy Server. It allows us to facilitate flash socket connections much more quickly in most cases.
         /// Don't mess with it through here. It's only public so we can access it later from all the IOCPs.
         /// </summary>
-        public APServer AccessPolicyServer = null;
-
+        public AccessPolicyServer AccessPolicyServer;
 
         /// <summary>
         /// 
         /// </summary>
-        public ILog Log = LogManager.GetLogger("Alchemy.Log");
-
-
-        /// <summary>
-        /// These are the command strings that the server and client will filter out and treat as heartbeats.
-        /// </summary>
-        public string PingCommand = "7";
-        public string PongCommand = "7";
+        public ILog Log = LogManager.GetLogger("SimpleWebsockets.Log");
 
         /// <summary>
         /// Configuration for the above heartbeat setup.
         /// TimeOut : How long until a connection drops when it doesn't receive anything.
-        /// MaxPingsInSequence : A multiple of TimeOut for how long a connection can remain idle(only pings received) before we kill it.
         /// </summary>
         public TimeSpan TimeOut = TimeSpan.FromMinutes(1);
-        public int MaxPingsInSequence = 0;
 
         /// <summary>
-        /// Enables or disables the Flash Access Policy Server(APServer).
+        /// Enables or disables the Flash Access Policy Server(AccessPolicyServer).
         /// This is used when you would like your app to only listen on a single port rather than 2.
         /// Warning, any flash socket connections will have an added delay on connection due to the client looking to port 843 first for the connection restrictions.
         /// </summary>
@@ -115,8 +92,7 @@ namespace Alchemy.Server
         /// <summary>
         /// Gets the client count.
         /// </summary>
-        public int ClientCount
-        { get { return _Clients; } }
+        public int ClientCount { get; private set; }
 
         /// <summary>
         /// Gets or sets the port.
@@ -124,17 +100,7 @@ namespace Alchemy.Server
         /// <value>
         /// The port.
         /// </value>
-        public int Port
-        {
-            get
-            {
-                return _Port;
-            }
-            set
-            {
-                _Port = value;
-            }
-        }
+        public int Port { get; set; }
 
         /// <summary>
         /// Gets or sets the listener address.
@@ -142,17 +108,7 @@ namespace Alchemy.Server
         /// <value>
         /// The listener address.
         /// </value>
-        public IPAddress ListenerAddress
-        {
-            get
-            {
-                return _ListenerAddress;
-            }
-            set
-            {
-                _ListenerAddress = value;
-            }
-        }
+        public IPAddress ListenerAddress { get; set; }
 
         /// <summary>
         /// Gets or sets the origin host.
@@ -164,12 +120,14 @@ namespace Alchemy.Server
         {
             get
             {
-                return _OriginHost;
+                return _originHost;
             }
+
             set
             {
-                _OriginHost = value;
-                WebSocketAuthentication.Origin = _OriginHost;
+                _originHost = value;
+
+                WebSocketAuthentication.Origin = _originHost;
             }
         }
 
@@ -183,12 +141,13 @@ namespace Alchemy.Server
         {
             get
             {
-                return _DestinationHost;
+                return _destinationHost;
             }
             set
             {
-                _DestinationHost = value;
-                WebSocketAuthentication.Location = _DestinationHost;
+                _destinationHost = value;
+
+                WebSocketAuthentication.Location = _destinationHost;
             }
         }
 
@@ -212,7 +171,7 @@ namespace Alchemy.Server
         /// <value>
         /// The log config file name.
         /// </value>
-        public string LogConfigFile
+        public static string LogConfigFile
         {
             set
             {
@@ -221,18 +180,26 @@ namespace Alchemy.Server
         }
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="WSServer"/> class.
+        /// Initializes a new instance of the <see cref="WebsocketServer"/> class.
         /// </summary>
-        /// <param name="ListenPort">The listen port.</param>
-        /// <param name="ListenIp">The listen ip.</param>
-        public WSServer(int ListenPort = 0, IPAddress ListenIp = null)
+        /// <param name="listenPort">The listen port.</param>
+        /// <param name="listenIp">The listen ip.</param>
+        public WebsocketServer(int listenPort = 0, IPAddress listenIp = null)
         {
-            LogConfigFile = "Alchemy.config";
-            LoggerName = "Alchemy.Log";
-            if(ListenPort > 0)
-                _Port = ListenPort;
-            if(ListenIp != null)
-                _ListenerAddress = ListenIp;
+            ListenerAddress = IPAddress.Any;
+            Port = 81;
+            LogConfigFile = "SimpleWebsockets.config";
+            LoggerName = "SimpleWebsockets.Log";
+            
+            if (listenPort > 0)
+            {
+                Port = listenPort;
+            }
+            
+            if (listenIp != null)
+            {
+                ListenerAddress = listenIp;
+            }
         }
 
         /// <summary>
@@ -240,23 +207,28 @@ namespace Alchemy.Server
         /// </summary>
         public void Start()
         {
-            if (Listener == null)
+            if (_listener == null)
             {
                 try
                 {
-                    AccessPolicyServer = new APServer(ListenerAddress, OriginHost, Port);
+                    AccessPolicyServer = new AccessPolicyServer(ListenerAddress, OriginHost, Port);
 
                     if (FlashAPEnabled)
                     {
                         AccessPolicyServer.Start();
                     }
 
-                    Listener = new TcpListener(ListenerAddress, Port);
+                    _listener = new TcpListener(ListenerAddress, Port);
+
                     ThreadPool.QueueUserWorkItem(Listen, null);
                 }
-                catch { /* Ignore */ }
+                catch
+                {
+                     /* Ignore */
+                }
             }
-            Log.Info("Alchemy Server Started");
+
+            Log.Info("SimpleWebsockets server started");
         }
 
         /// <summary>
@@ -264,19 +236,27 @@ namespace Alchemy.Server
         /// </summary>
         public void Stop()
         {
-            if (Listener != null)
+            if (_listener != null)
             {
                 try
                 {
-                    Listener.Stop();
-                    if((AccessPolicyServer != null) && (FlashAPEnabled))
+                    _listener.Stop();
+            
+                    if (AccessPolicyServer != null && FlashAPEnabled)
+                    {
                         AccessPolicyServer.Stop();
+                    }
                 }
-                catch { /* Ignore */ }
+                catch
+                {
+                     /* Ignore */
+                }
             }
-            Listener = null;
+
+            _listener = null;
             AccessPolicyServer = null;
-            Log.Info("Alchemy Server Stopped");
+            
+            Log.Info("SimpleWebsockets server stopped");
         }
 
         /// <summary>
@@ -292,18 +272,23 @@ namespace Alchemy.Server
         /// Listens for new connections.
         /// Utilizes a semaphore(ConnectReady) to manage how many active connect attempts we can manage concurrently.
         /// </summary>
-        /// <param name="State">The state.</param>
-        private void Listen(object State)
+        /// <param name="state">The state.</param>
+        private void Listen(object state)
         {
-            Listener.Start();
-            while (Listener != null)
+            _listener.Start();
+
+            while (_listener != null)
             {
                 try
                 {
-                    Listener.BeginAcceptTcpClient(RunClient, null);
-                    ConnectReady.Wait();
+                    _listener.BeginAcceptTcpClient(RunClient, null);
+
+                    _connectReady.Wait();
                 }
-                catch {/* Ignore */ }
+                catch
+                {
+                    /* Ignore */
+                }
             }
         }
 
@@ -313,81 +298,102 @@ namespace Alchemy.Server
         /// Executes in it's own thread.
         /// Utilizes a semaphore(ReceiveReady) to limit the number of receive events active for this client to 1 at a time.
         /// </summary>
-        /// <param name="AResult">The A result.</param>
-        private void RunClient(IAsyncResult AResult)
+        /// <param name="result">The A result.</param>
+        private void RunClient(IAsyncResult result)
         {
-            TcpClient AConnection = null;
+            TcpClient connection = null;
+
             try
             {
-                if (Listener != null)
-                    AConnection = Listener.EndAcceptTcpClient(AResult);
-            }
-            catch (Exception e) { Log.Debug("Connect Failed", e); }
-
-            ConnectReady.Release();
-            if(AConnection != null)
-            {
-                ClientLock.Wait();
-                _Clients++;
-                ClientLock.Release();
-
-                using (Context AContext = new Context())
+                if (_listener != null)
                 {
-                    AContext.Server = this;
-                    AContext.Connection = AConnection;
-                    AContext.UserContext.ClientAddress = AContext.Connection.Client.RemoteEndPoint;
-                    AContext.UserContext.SetOnConnect(DefaultOnConnect);
-                    AContext.UserContext.SetOnDisconnect(DefaultOnDisconnect);
-                    AContext.UserContext.SetOnSend(DefaultOnSend);
-                    AContext.UserContext.SetOnReceive(DefaultOnReceive);
-                    AContext.BufferSize = DefaultBufferSize;
-                    AContext.UserContext.OnConnect();
-                    try
+                    connection = _listener.EndAcceptTcpClient(result);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Debug("Connect failed", e);
+            }
+
+            _connectReady.Release();
+
+            if (connection == null)
+            {
+                return;
+            }
+
+            _clientLock.Wait();
+            ClientCount++;
+            _clientLock.Release();
+
+            using (var context = new Context())
+            {
+                context.Server = this;
+                context.Connection = connection;
+                context.BufferSize = DefaultBufferSize;
+
+                context.UserContext.ClientAddress = context.Connection.Client.RemoteEndPoint;
+
+                context.UserContext.SetOnConnect(DefaultOnConnect);
+                context.UserContext.SetOnDisconnect(DefaultOnDisconnect);
+                context.UserContext.SetOnSend(DefaultOnSend);
+                context.UserContext.SetOnReceive(DefaultOnReceive);
+                
+                context.UserContext.OnConnect();
+
+                try
+                {
+                    while (context.Connection.Connected)
                     {
-                        while (AContext.Connection.Connected)
+                        if (context.ReceiveReady.Wait(TimeOut))
                         {
-                            if (AContext.ReceiveReady.Wait(TimeOut))
-                            {
-                                AContext.Connection.Client.BeginReceive(AContext.Buffer, 0, AContext.Buffer.Length, SocketFlags.None, DoReceive, AContext);
-                            }
-                            else
-                            {
-                                break;
-                            }
+                            context.Connection.Client.BeginReceive(context.Buffer, 0, context.Buffer.Length, SocketFlags.None, DoReceive, context);
+                        }
+                        else
+                        {
+                            break;
                         }
                     }
-                    catch (Exception e) { Log.Debug("Client Forcefully Disconnected", e); }
                 }
-
-                ClientLock.Wait();
-                _Clients--;
-                ClientLock.Release();
+                catch (Exception e)
+                {
+                    Log.Debug("Client Forcefully Disconnected", e);
+                }
             }
+
+            _clientLock.Wait();
+            ClientCount--;
+            _clientLock.Release();
         }
 
         /// <summary>
         /// The root receive event for each client. Executes in it's own thread.
         /// </summary>
-        /// <param name="AResult">The Async result.</param>
-        private void DoReceive(IAsyncResult AResult)
+        /// <param name="result">The Async result.</param>
+        private void DoReceive(IAsyncResult result)
         {
-            Context AContext = (Context)AResult.AsyncState;
-            AContext.Reset();
+            var context = (Context)result.AsyncState;
+
+            context.Reset();
+            
             try
             {
-                AContext.ReceivedByteCount = AContext.Connection.Client.EndReceive(AResult);
+                context.ReceivedByteCount = context.Connection.Client.EndReceive(result);
             }
-            catch (Exception e) { Log.Debug("Client Forcefully Disconnected", e); }
+            catch (Exception e)
+            { 
+                Log.Debug("Client Forcefully Disconnected", e); 
+            }
 
-            if (AContext.ReceivedByteCount > 0)
+            if (context.ReceivedByteCount > 0)
             {
-                AContext.ReceiveReady.Release();
-                AContext.Handler.HandleRequest(AContext);
+                context.ReceiveReady.Release();
+                context.Handler.HandleRequest(context);
             }
             else
             {
-                AContext.Dispose();
-                AContext.ReceiveReady.Release();
+                context.Dispose();
+                context.ReceiveReady.Release();
             }
         }
 

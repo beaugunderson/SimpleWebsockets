@@ -1,56 +1,51 @@
 ﻿/*
-Copyright 2011 Olivine Labs, LLC.
-http://www.olivinelabs.com
+Portions copyright 2011 Beau Gunderson - http://www.beaugunderson.com/
+Portions copyright 2011 Olivine Labs, LLC. - http://www.olivinelabs.com/
 */
 
 /*
-This file is part of Alchemy Websockets.
+This file is part of SimpleWebsockets.
 
-Alchemy Websockets is free software: you can redistribute it and/or modify
+SimpleWebsockets is free software: you can redistribute it and/or modify
 it under the terms of the GNU Lesser General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-Alchemy Websockets is distributed in the hope that it will be useful,
+SimpleWebsockets is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU Lesser General Public License for more details.
 
 You should have received a copy of the GNU Lesser General Public License
-along with Alchemy Websockets.  If not, see <http://www.gnu.org/licenses/>.
+along with SimpleWebsockets.  If not, see <http://www.gnu.org/licenses/>.
 */
 
 using System;
-using System.Collections.Generic;
-using System.Linq;
 using System.Text;
 using System.Net;
 using System.Net.Sockets;
 using System.Threading;
-using Alchemy.Server.Classes;
-using log4net;
-using System.IO;
 
-namespace Alchemy.Server
+namespace SimpleWebsockets.Server
 {
     /// <summary>
     /// This is the Flash Access Policy Server
     /// It manages sending the XML cross domain policy to flash socket clients over port 843.
     /// See http://www.adobe.com/devnet/articles/crossdomain_policy_file_spec.html for details.
     /// </summary>
-    public class APServer : IDisposable
+    public class AccessPolicyServer : IDisposable
     {
-        private int _Port = 843;
-        private IPAddress _ListenerAddress = IPAddress.Any;
-        private string _AllowedHost = "localhost";
-        private int _AllowedPort = 81;
+        private int _port = 843;
+        private IPAddress _listenerAddress = IPAddress.Any;
+        private string _allowedHost = "localhost";
+        private int _allowedPort = 81;
 
-        private TcpListener Listener = null;
+        private TcpListener _listener;
 
         /// <summary>
         /// Limits how many active connect events we have.
         /// </summary>
-        private SemaphoreSlim ConnectReady = new SemaphoreSlim(10);
+        private readonly SemaphoreSlim ConnectReady = new SemaphoreSlim(10);
 
         /// <summary>
         /// The pre-formatted XML response.
@@ -70,29 +65,33 @@ namespace Alchemy.Server
         {
             get
             {
-                return _ListenerAddress;
+                return _listenerAddress;
             }
+
             set
             {
-                _ListenerAddress = value;
+                _listenerAddress = value;
             }
         }
 
         /// <summary>
-        /// Initializes a new instance of the <see cref="APServer"/> class.
+        /// Initializes a new instance of the <see cref="AccessPolicyServer"/> class.
         /// </summary>
-        /// <param name="ListenAddress">The listen address.</param>
-        /// <param name="OriginDomain">The origin domain.</param>
-        /// <param name="AllowedPort">The allowed port.</param>
-        public APServer(IPAddress ListenAddress, string OriginDomain, int AllowedPort)
+        /// <param name="listenAddress">The listen address.</param>
+        /// <param name="originDomain">The origin domain.</param>
+        /// <param name="allowedPort">The allowed port.</param>
+        public AccessPolicyServer(IPAddress listenAddress, string originDomain, int allowedPort)
         {
-            string OriginLockdown = "*";
-            if (OriginDomain != String.Empty)
-                OriginLockdown = OriginDomain;
+            string originLockdown = "*";
 
-            _ListenerAddress = ListenAddress;
-            _AllowedHost = OriginLockdown;
-            _AllowedPort = AllowedPort;
+            if (originDomain != String.Empty)
+            {
+                originLockdown = originDomain;
+            }
+
+            _listenerAddress = listenAddress;
+            _allowedHost = originLockdown;
+            _allowedPort = allowedPort;
         }
 
         /// <summary>
@@ -100,15 +99,18 @@ namespace Alchemy.Server
         /// </summary>
         public void Start()
         {
-            if (Listener == null)
+            if (_listener != null)
             {
-                try
-                {
-                    Listener = new TcpListener(ListenerAddress, _Port);
-                    ThreadPool.QueueUserWorkItem(Listen, null);
-                }
-                catch { /* Ignore */ }
+                return;
             }
+            
+            try
+            {
+                _listener = new TcpListener(ListenerAddress, _port);
+
+                ThreadPool.QueueUserWorkItem(Listen, null);
+            }
+            catch { /* Ignore */ }
         }
 
         /// <summary>
@@ -116,15 +118,16 @@ namespace Alchemy.Server
         /// </summary>
         public void Stop()
         {
-            if (Listener != null)
+            if (_listener != null)
             {
                 try
                 {
-                    Listener.Stop();
+                    _listener.Stop();
                 }
                 catch { /* Ignore */ }
             }
-            Listener = null;
+
+            _listener = null;
         }
 
         /// <summary>
@@ -139,17 +142,19 @@ namespace Alchemy.Server
         /// <summary>
         /// Listens on the ip and port specified.
         /// </summary>
-        /// <param name="State">The state.</param>
-        private void Listen(object State)
+        /// <param name="state">The state.</param>
+        private void Listen(object state)
         {
-            Listener.Start();
-            while (Listener != null)
+            _listener.Start();
+
+            while (_listener != null)
             {
                 try
                 {
-                    Listener.BeginAcceptTcpClient(RunClient, null);
+                    _listener.BeginAcceptTcpClient(RunClient, null);
                 }
                 catch { /* Ignore */ }
+
                 ConnectReady.Wait();
             }
         }
@@ -157,28 +162,36 @@ namespace Alchemy.Server
         /// <summary>
         /// Runs the client.
         /// </summary>
-        /// <param name="AResult">The Async result.</param>
-        private void RunClient(IAsyncResult AResult)
+        /// <param name="result">The Async result.</param>
+        private void RunClient(IAsyncResult result)
         {
-            TcpClient AConnection = null;
+            TcpClient connection = null;
+            
             try
             {
-                if (Listener != null)
-                    AConnection = Listener.EndAcceptTcpClient(AResult);
+                if (_listener != null)
+                {
+                    connection = _listener.EndAcceptTcpClient(result);
+                }
             }
             catch { /* Ignore */ }
 
             ConnectReady.Release();
-            if (AConnection != null)
+
+            if (connection == null)
             {
-                try
-                {
-                    AConnection.Client.Receive(new byte[32]);
-                    SendResponse(AConnection);
-                    AConnection.Client.Close();
-                }
-                catch { /* Ignore */ }
+                return;
             }
+            
+            try
+            {
+                connection.Client.Receive(new byte[32]);
+            
+                SendResponse(connection);
+                
+                connection.Client.Close();
+            }
+            catch { /* Ignore */ }
         }
 
         /// <summary>
@@ -192,10 +205,10 @@ namespace Alchemy.Server
         /// <summary>
         /// Sends the response.
         /// </summary>
-        /// <param name="AConnection">The TCP Connection.</param>
-        public void SendResponse(TcpClient AConnection)
+        /// <param name="connection">The TCP Connection.</param>
+        public void SendResponse(TcpClient connection)
         {
-            AConnection.Client.Send(UTF8Encoding.UTF8.GetBytes(String.Format(Response, _AllowedHost, _AllowedPort.ToString())));
+            connection.Client.Send(Encoding.UTF8.GetBytes(String.Format(Response, _allowedHost, _allowedPort)));
         }
     }
 }

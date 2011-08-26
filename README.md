@@ -8,8 +8,6 @@ Forked from Olivine Labs' [Alchemy Websockets](https://github.com/Olivine-Labs/A
 Usage
 -----
 
-Example:
-
 ```c#
 var server = new WebsocketServer(81, IPAddress.Any)
 {

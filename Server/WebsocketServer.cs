@@ -80,7 +80,7 @@ namespace SimpleWebsockets.Server
         /// Configuration for the above heartbeat setup.
         /// TimeOut : How long until a connection drops when it doesn't receive anything.
         /// </summary>
-        public TimeSpan TimeOut = TimeSpan.FromMinutes(1);
+        public TimeSpan TimeOut = TimeSpan.FromMinutes(5);
 
         /// <summary>
         /// Enables or disables the Flash Access Policy Server(AccessPolicyServer).
